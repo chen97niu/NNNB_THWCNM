@@ -1,6 +1,6 @@
 --[[
-    创世神VN 飞行菜单 v2.0
-    手机完全适配：摇杆移动 + 视角上下飞
+    创世神VN 飞行菜单 v2.1
+    手机完全适配：摇杆移动（已修复反向）+ 视角上下飞
 --]]
 
 local player = game.Players.LocalPlayer
@@ -48,13 +48,13 @@ border.Parent = mainButton
 
 -- 颜色变换动画
 local colors = {
-    Color3.fromRGB(255, 0, 0),     -- 红
-    Color3.fromRGB(255, 165, 0),   -- 橙
-    Color3.fromRGB(255, 255, 0),   -- 黄
-    Color3.fromRGB(0, 255, 0),     -- 绿
-    Color3.fromRGB(0, 255, 255),   -- 青
-    Color3.fromRGB(0, 0, 255),     -- 蓝
-    Color3.fromRGB(255, 0, 255)    -- 紫
+    Color3.fromRGB(255, 0, 0),
+    Color3.fromRGB(255, 165, 0),
+    Color3.fromRGB(255, 255, 0),
+    Color3.fromRGB(0, 255, 0),
+    Color3.fromRGB(0, 255, 255),
+    Color3.fromRGB(0, 0, 255),
+    Color3.fromRGB(255, 0, 255)
 }
 local colorIndex = 1
 task.spawn(function()
@@ -168,7 +168,6 @@ for i = 1, 5 do
         flySpeed = flySpeeds[currentSpeedLevel]
         speedDisplay.Text = "档位 " .. currentSpeedLevel .. "/5 | 速度 " .. flySpeed
         
-        -- 高亮当前档位
         for j, b in pairs(speedBtns) do
             if j == currentSpeedLevel then
                 b.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
@@ -183,7 +182,6 @@ for i = 1, 5 do
     end)
 end
 
--- 高亮默认档位
 speedBtns[1].BackgroundColor3 = Color3.fromRGB(255, 100, 0)
 
 -- ========== 飞行开关逻辑 ==========
@@ -205,32 +203,40 @@ flyToggle.MouseButton1Click:Connect(function()
     end
 end)
 
--- ========== 移动方向计算（手机摇杆 + 视角上下） ==========
+-- ========== 移动方向计算（修复摇杆反向） ==========
 local function getMoveDirection()
     local camera = workspace.CurrentCamera
     local moveDir = Vector3.new(0, 0, 0)
     
-    -- 手机摇杆移动方向（MoveDirection 自动适配摇杆）
-    local stickMove = humanoid.MoveDirection
-    if stickMove.Magnitude > 0.1 then
-        -- 将摇杆方向转换到相机空间
+    -- 获取摇杆输入（MoveDirection）
+    -- X: 左右 (正=右, 负=左)
+    -- Z: 前后 (正=前, 负=后)
+    local stickX = humanoid.MoveDirection.X
+    local stickZ = humanoid.MoveDirection.Z
+    
+    if math.abs(stickX) > 0.1 or math.abs(stickZ) > 0.1 then
+        -- 获取相机的前方向和右方向（忽略上下倾斜）
         local camForward = camera.CFrame.LookVector
         local camRight = camera.CFrame.RightVector
         camForward = Vector3.new(camForward.X, 0, camForward.Z).Unit
         camRight = Vector3.new(camRight.X, 0, camRight.Z).Unit
         
-        moveDir = camForward * stickMove.Z + camRight * stickMove.X
+        -- 摇杆方向：前(正Z)=前进，后(负Z)=后退，左(负X)=左移，右(正X)=右移
+        -- 已修复：直接使用 stickZ 和 stickX，不做反向
+        moveDir = (camForward * stickZ) + (camRight * stickX)
     end
     
     -- 上下飞行：根据相机视角的上下方向
-    -- 手机上：看天就向上飞，看地就向下飞
+    -- 相机向上看时Y为正，向下看时为负
     local cameraLook = camera.CFrame.LookVector
     local verticalMove = cameraLook.Y
+    
+    -- 灵敏度阈值，避免轻微晃动就上下飞
     if math.abs(verticalMove) > 0.3 then
-        moveDir = moveDir + Vector3.new(0, verticalMove, 0)
+        moveDir = moveDir + Vector3.new(0, verticalMove * 1.2, 0)
     end
     
-    if moveDir.Magnitude > 0 then
+    if moveDir.Magnitude > 0.01 then
         moveDir = moveDir.Unit * flySpeed
     end
     return moveDir
@@ -278,14 +284,14 @@ rs.RenderStepped:Connect(function()
     end
 end)
 
--- ========== 防摔和无限跳跃（可选小功能） ==========
--- 防摔
+-- ========== 辅助功能：防摔 + 无限跳跃 ==========
 humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
--- 无限跳跃
+
 uis.JumpRequest:Connect(function()
-    if humanoid then
+    if humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping then
         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     end
 end)
 
 print("[创世神VN] 加载完成！点击红色按钮打开菜单")
+print("[提示] 摇杆：上=前进，下=后退，左=左移，右=右移 | 视角上下=上下飞行")
