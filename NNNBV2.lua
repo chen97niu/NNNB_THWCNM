@@ -1,12 +1,12 @@
 --[[
     创世神VN 飞行菜单 v2.1
-    修复：防止重复生成菜单
-    修复：摇杆控制前后左右（基于相机），视角上下控制升降
+    修复：多次注入不重复生成菜单
+    修复：摇杆控制前后左右，视角控制上下，开启飞行后静止不动
 --]]
 
--- 防止重复加载（关键修复）
+-- ========== 防止重复加载 ==========
 if _G.NNNBV2_Loaded then
-    print("[创世神VN] 脚本已加载，跳过重复执行")
+    print("[创世神VN] 脚本已运行，无需重复加载")
     return
 end
 _G.NNNBV2_Loaded = true
@@ -27,9 +27,15 @@ local flySpeed = flySpeeds[currentSpeedLevel]
 local bodyVelocity = Instance.new("BodyVelocity")
 bodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 100000
 
+-- ========== 检查是否已有UI ==========
+local existingGui = player.PlayerGui:FindFirstChild("ChuangShiShenVN")
+if existingGui then
+    existingGui:Destroy()
+end
+
 -- ========== 创建主菜单UI ==========
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ChuangShenVN_Main"
+screenGui.Name = "ChuangShiShenVN"
 screenGui.Parent = player.PlayerGui
 screenGui.ResetOnSpawn = false
 
@@ -56,13 +62,13 @@ border.Parent = mainButton
 
 -- 颜色变换动画
 local colors = {
-    Color3.fromRGB(255, 0, 0),     -- 红
-    Color3.fromRGB(255, 165, 0),   -- 橙
-    Color3.fromRGB(255, 255, 0),   -- 黄
-    Color3.fromRGB(0, 255, 0),     -- 绿
-    Color3.fromRGB(0, 255, 255),   -- 青
-    Color3.fromRGB(0, 0, 255),     -- 蓝
-    Color3.fromRGB(255, 0, 255)    -- 紫
+    Color3.fromRGB(255, 0, 0),
+    Color3.fromRGB(255, 165, 0),
+    Color3.fromRGB(255, 255, 0),
+    Color3.fromRGB(0, 255, 0),
+    Color3.fromRGB(0, 255, 255),
+    Color3.fromRGB(0, 0, 255),
+    Color3.fromRGB(255, 0, 255)
 }
 local colorIndex = 1
 task.spawn(function()
@@ -87,7 +93,7 @@ btnText.Parent = mainButton
 -- ========== 菜单Frame ==========
 local menuFrame = Instance.new("Frame")
 menuFrame.Size = UDim2.new(0, 300, 0, 400)
-menuFrame.Position = UDim2.new(0.5, -150, 0.5, -200)
+menuFrame.Position = UDim2.new(0.5, -150, 0.2, 0)
 menuFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 menuFrame.BackgroundTransparency = 0.05
 menuFrame.BorderSizePixel = 0
@@ -206,37 +212,35 @@ flyToggle.MouseButton1Click:Connect(function()
     end
 end)
 
--- ========== 移动方向计算（修复版） ==========
--- 摇杆：控制前后左右（基于相机方向）
--- 视角：控制上下（看天向上，看地向下）
+-- ========== 移动方向计算 ==========
+-- 摇杆：控制前后左右
+-- 视角：控制上下（向上看就上升，向下看就下降）
 local function getMoveDirection()
     local camera = workspace.CurrentCamera
     local moveDir = Vector3.new(0, 0, 0)
     
-    -- 1. 摇杆输入（前后左右）
+    -- 1. 手机摇杆移动方向（控制前后左右）
     local stickMove = humanoid.MoveDirection
     if stickMove.Magnitude > 0.1 then
-        -- 获取相机的前和右方向（忽略上下倾斜）
+        -- 将摇杆方向转换到相机平面
         local camForward = camera.CFrame.LookVector
         local camRight = camera.CFrame.RightVector
         camForward = Vector3.new(camForward.X, 0, camForward.Z).Unit
         camRight = Vector3.new(camRight.X, 0, camRight.Z).Unit
         
-        -- 摇杆: Z轴前后，X轴左右
-        moveDir = (camForward * -stickMove.Z) + (camRight * stickMove.X)
+        moveDir = (camForward * stickMove.Z + camRight * stickMove.X) * flySpeed
     end
     
-    -- 2. 视角上下（看天向上，看地向下）
+    -- 2. 视角控制上下飞行（看天上升，看地下降）
     local cameraLook = camera.CFrame.LookVector
     local verticalInput = -cameraLook.Y  -- 向上看为正，向下看为负
     
+    -- 死区：只有视角倾斜超过0.3时才触发上下飞
     if math.abs(verticalInput) > 0.3 then
-        moveDir = moveDir + Vector3.new(0, verticalInput, 0)
+        local verticalSpeed = verticalInput * flySpeed
+        moveDir = moveDir + Vector3.new(0, verticalSpeed, 0)
     end
     
-    if moveDir.Magnitude > 0 then
-        moveDir = moveDir.Unit * flySpeed
-    end
     return moveDir
 end
 
@@ -247,13 +251,12 @@ mainButton.MouseButton1Click:Connect(function()
     menuFrame.Visible = menuOpen
 end)
 
--- ========== 可拖动主按钮（手机触摸） ==========
+-- ========== 可拖动主按钮 ==========
 local dragging = false
-local dragStart
-local buttonStart
+local dragStart, buttonStart
 
 mainButton.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch then
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = true
         dragStart = input.Position
         buttonStart = mainButton.Position
@@ -261,13 +264,11 @@ mainButton.InputBegan:Connect(function(input)
 end)
 
 mainButton.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
+    dragging = false
 end)
 
 uis.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.Touch then
+    if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
         local delta = input.Position - dragStart
         mainButton.Position = UDim2.new(buttonStart.X.Scale, buttonStart.X.Offset + delta.X, buttonStart.Y.Scale, buttonStart.Y.Offset + delta.Y)
     end
@@ -275,18 +276,20 @@ end)
 
 -- ========== 飞行循环 ==========
 rs.RenderStepped:Connect(function()
-    if flying then
+    if flying and humanoid and rootPart and bodyVelocity then
         bodyVelocity.Velocity = getMoveDirection()
     end
 end)
 
 -- ========== 辅助功能 ==========
+-- 防摔
 humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+-- 无限跳跃
 uis.JumpRequest:Connect(function()
-    if humanoid then
+    if humanoid and not flying then
         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     end
 end)
 
 print("[创世神VN] 加载完成！点击红色按钮打开菜单")
-print("[操作] 摇杆移动前后左右 | 视角上下控制升降")
+print("[操作说明] 摇杆=前后左右 | 视角向上看=上升 | 视角向下看=下降")
