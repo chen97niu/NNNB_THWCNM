@@ -1,15 +1,12 @@
 --[[
     创世神VN 飞行菜单 v2.1
-    修复：多次注入不重复生成菜单
-    修复：摇杆控制前后左右，视角控制上下，开启飞行后静止不动
+    修复：防止重复创建菜单 + 摇杆方向修正 + 视角自由飞行
 --]]
 
--- ========== 防止重复加载 ==========
-if _G.NNNBV2_Loaded then
-    print("[创世神VN] 脚本已运行，无需重复加载")
-    return
+-- 防止重复加载：先删除旧菜单
+if game.Players.LocalPlayer.PlayerGui:FindFirstChild("ChuangShiShenVN") then
+    game.Players.LocalPlayer.PlayerGui.ChuangShiShenVN:Destroy()
 end
-_G.NNNBV2_Loaded = true
 
 local player = game.Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -26,12 +23,6 @@ local flySpeed = flySpeeds[currentSpeedLevel]
 
 local bodyVelocity = Instance.new("BodyVelocity")
 bodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 100000
-
--- ========== 检查是否已有UI ==========
-local existingGui = player.PlayerGui:FindFirstChild("ChuangShiShenVN")
-if existingGui then
-    existingGui:Destroy()
-end
 
 -- ========== 创建主菜单UI ==========
 local screenGui = Instance.new("ScreenGui")
@@ -93,7 +84,7 @@ btnText.Parent = mainButton
 -- ========== 菜单Frame ==========
 local menuFrame = Instance.new("Frame")
 menuFrame.Size = UDim2.new(0, 300, 0, 400)
-menuFrame.Position = UDim2.new(0.5, -150, 0.2, 0)
+menuFrame.Position = UDim2.new(0.5, -150, 0.5, -200)
 menuFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 menuFrame.BackgroundTransparency = 0.05
 menuFrame.BorderSizePixel = 0
@@ -183,7 +174,11 @@ for i = 1, 5 do
         speedDisplay.Text = "档位 " .. currentSpeedLevel .. "/5 | 速度 " .. flySpeed
         
         for j, b in pairs(speedBtns) do
-            b.BackgroundColor3 = (j == currentSpeedLevel) and Color3.fromRGB(255, 100, 0) or Color3.fromRGB(60, 60, 60)
+            if j == currentSpeedLevel then
+                b.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+            else
+                b.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+            end
         end
         
         if flying then
@@ -191,6 +186,7 @@ for i = 1, 5 do
         end
     end)
 end
+
 speedBtns[1].BackgroundColor3 = Color3.fromRGB(255, 100, 0)
 
 -- ========== 飞行开关逻辑 ==========
@@ -212,35 +208,41 @@ flyToggle.MouseButton1Click:Connect(function()
     end
 end)
 
--- ========== 移动方向计算 ==========
--- 摇杆：控制前后左右
--- 视角：控制上下（向上看就上升，向下看就下降）
+-- ========== 修复后的移动方向计算 ==========
+-- 核心逻辑：
+-- 1. 摇杆控制前后左右（相对于相机）
+-- 2. 上下飞行：根据相机视角的上下方向（看天向上，看地向下）
+-- 3. 摇杆的上下对应相机的前后，摇杆的左右对应相机的左右
 local function getMoveDirection()
     local camera = workspace.CurrentCamera
     local moveDir = Vector3.new(0, 0, 0)
     
-    -- 1. 手机摇杆移动方向（控制前后左右）
+    -- 获取相机的方向和右方向（投影到水平面）
+    local camForward = camera.CFrame.LookVector
+    local camRight = camera.CFrame.RightVector
+    camForward = Vector3.new(camForward.X, 0, camForward.Z).Unit
+    camRight = Vector3.new(camRight.X, 0, camRight.Z).Unit
+    
+    -- 获取摇杆输入 (MoveDirection)
     local stickMove = humanoid.MoveDirection
     if stickMove.Magnitude > 0.1 then
-        -- 将摇杆方向转换到相机平面
-        local camForward = camera.CFrame.LookVector
-        local camRight = camera.CFrame.RightVector
-        camForward = Vector3.new(camForward.X, 0, camForward.Z).Unit
-        camRight = Vector3.new(camRight.X, 0, camRight.Z).Unit
-        
-        moveDir = (camForward * stickMove.Z + camRight * stickMove.X) * flySpeed
+        -- 修正：摇杆X对应左右，摇杆Z对应前后
+        -- stickMove.X: 正值=右，负值=左
+        -- stickMove.Z: 正值=前，负值=后
+        moveDir = camForward * stickMove.Z + camRight * stickMove.X
     end
     
-    -- 2. 视角控制上下飞行（看天上升，看地下降）
+    -- 上下飞行：根据相机视角的俯仰角
+    -- 相机向上看（Y<0）则向上飞，相机向下看（Y>0）则向下飞
     local cameraLook = camera.CFrame.LookVector
-    local verticalInput = -cameraLook.Y  -- 向上看为正，向下看为负
-    
-    -- 死区：只有视角倾斜超过0.3时才触发上下飞
-    if math.abs(verticalInput) > 0.3 then
-        local verticalSpeed = verticalInput * flySpeed
-        moveDir = moveDir + Vector3.new(0, verticalSpeed, 0)
+    local vertical = -cameraLook.Y  -- 负号修正：向上看时Y为负，我们要向上飞
+    if math.abs(vertical) > 0.2 then
+        moveDir = moveDir + Vector3.new(0, vertical, 0)
     end
     
+    if moveDir.Magnitude > 0 then
+        moveDir = moveDir.Unit * flySpeed
+    end
     return moveDir
 end
 
@@ -253,10 +255,11 @@ end)
 
 -- ========== 可拖动主按钮 ==========
 local dragging = false
-local dragStart, buttonStart
+local dragStart
+local buttonStart
 
 mainButton.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
         buttonStart = mainButton.Position
@@ -264,32 +267,35 @@ mainButton.InputBegan:Connect(function(input)
 end)
 
 mainButton.InputEnded:Connect(function(input)
-    dragging = false
+    if input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
 end)
 
 uis.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+    if dragging and input.UserInputType == Enum.UserInputType.Touch then
         local delta = input.Position - dragStart
-        mainButton.Position = UDim2.new(buttonStart.X.Scale, buttonStart.X.Offset + delta.X, buttonStart.Y.Scale, buttonStart.Y.Offset + delta.Y)
+        local newX = buttonStart.X.Offset + delta.X
+        local newY = buttonStart.Y.Offset + delta.Y
+        mainButton.Position = UDim2.new(buttonStart.X.Scale, newX, buttonStart.Y.Scale, newY)
     end
 end)
 
 -- ========== 飞行循环 ==========
 rs.RenderStepped:Connect(function()
-    if flying and humanoid and rootPart and bodyVelocity then
+    if flying then
         bodyVelocity.Velocity = getMoveDirection()
     end
 end)
 
--- ========== 辅助功能 ==========
--- 防摔
+-- ========== 辅助功能：防摔 + 无限跳跃 ==========
 humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
--- 无限跳跃
+
 uis.JumpRequest:Connect(function()
-    if humanoid and not flying then
+    if humanoid then
         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     end
 end)
 
 print("[创世神VN] 加载完成！点击红色按钮打开菜单")
-print("[操作说明] 摇杆=前后左右 | 视角向上看=上升 | 视角向下看=下降")
+print("[操作说明] 摇杆:前后左右 | 视角:上下飞行")
